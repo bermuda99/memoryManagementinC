@@ -73,14 +73,21 @@ void logLoadedProcessData(PCB_t* pProcess)
 		pProcess->size, processTypeStr);
 }
 
-void logMemoryState(void)
-{
+void logMemoryState() {
+	static unsigned lastLoggedSystemTime = 0;
+
+	// Prüfen, ob sich der Zustand seit der letzten Log-Ausgabe geändert hat
+	if (systemTime == lastLoggedSystemTime) {
+		return; // Kein Logging erforderlich
+	}
+	lastLoggedSystemTime = systemTime;
+
 	FreeBlock_t* current = freeList;
 	printf("\n========================================\n");
 	printf(" Memory State at Time %u\n", systemTime);
 	printf("========================================\n");
 
-	// Zeige freie Speicherblöcke an
+	// Freie Speicherblöcke ausgeben
 	printf("Free Memory Blocks:\n");
 	printf("----------------------------------------\n");
 	while (current != NULL) {
@@ -88,22 +95,23 @@ void logMemoryState(void)
 		current = current->next;
 	}
 
-	// Zeige belegte Speicherbereiche pro Prozess an
+	// Prozesse ausgeben
 	printf("----------------------------------------\n");
 	printf("Allocated Memory (Processes):\n");
 	printf("----------------------------------------\n");
 	for (unsigned i = 0; i < MAX_PROCESSES; i++) {
 		if (processTable[i].valid && processTable[i].status == running) {
-			printf("PID: %3u | Start: %6u | Size: %6u | Status: %s\n",
+			printf("PID: %3u | Start: %6u | Size: %6u | Status: RUNNING\n",
 				processTable[i].pid,
 				processTable[i].start,
-				processTable[i].size,
-				(processTable[i].status == running) ? "RUNNING" : "UNKNOWN");
+				processTable[i].size);
 		}
 	}
-
 	printf("========================================\n\n");
 }
+
+
+
 
 
 /* ----------------------------------------------------------------- */

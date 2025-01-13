@@ -67,50 +67,55 @@ FreeBlock_t* findFreeBlock(unsigned size)
     return NULL; // No suitable block found
 }
 
-void freeMemory(unsigned start, unsigned size)
-{
+void freeMemory(unsigned start, unsigned size) {
     FreeBlock_t* newBlock = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
+    if (!newBlock) {
+        fprintf(stderr, "Memory allocation failed in freeMemory.\n");
+        exit(1);
+    }
     newBlock->start = start;
     newBlock->size = size;
     newBlock->next = NULL;
 
-    // Insert the new block into the free list in sorted order
     FreeBlock_t* current = freeList;
     FreeBlock_t* previous = NULL;
 
-    while (current != NULL && current->start < newBlock->start)
-    {
+    // In die Liste einfügen
+    while (current != NULL && current->start < start) {
         previous = current;
         current = current->next;
     }
 
     newBlock->next = current;
-
-    if (previous == NULL)
-    {
+    if (previous == NULL) {
         freeList = newBlock;
     }
-    else
-    {
+    else {
         previous->next = newBlock;
     }
 
-    // Merge adjacent free blocks
-    if (newBlock->next != NULL && newBlock->start + newBlock->size == newBlock->next->start)
-    {
+    // Konsolidierung benachbarter Blöcke
+    if (newBlock->next != NULL && newBlock->start + newBlock->size == newBlock->next->start) {
         newBlock->size += newBlock->next->size;
         FreeBlock_t* temp = newBlock->next;
         newBlock->next = newBlock->next->next;
         free(temp);
+        logGeneric("Adjacent free blocks merged (next).");
     }
-
-    if (previous != NULL && previous->start + previous->size == newBlock->start)
-    {
+    if (previous != NULL && previous->start + previous->size == newBlock->start) {
         previous->size += newBlock->size;
         previous->next = newBlock->next;
         free(newBlock);
+        logGeneric("Adjacent free blocks merged (previous).");
     }
+
+    logGeneric("Memory freed and consolidated.");
+    logMemoryState();
 }
+
+
+
+
 
 void enqueueBlockedProcess(PCB_t* process) {
     BlockedProcess_t* newBlocked = (BlockedProcess_t*)malloc(sizeof(BlockedProcess_t));
@@ -141,24 +146,44 @@ PCB_t* dequeueBlockedProcess() {
 }
 
 void compactMemory() {
-    FreeBlock_t* current = freeList;
+    // Prüfen, ob eine Kompaktierung notwendig ist
+    if (freeList == NULL || freeList->next == NULL) {
+        logGeneric("Memory compaction skipped: No fragmentation detected.");
+        return;
+    }
+
     unsigned nextFreeStart = 0;
 
-    while (current != NULL) {
-        if (current->start > nextFreeStart) {
-            // Verschiebe alle Prozesse nach unten
-            for (unsigned i = 0; i < MAX_PROCESSES; i++) {
-                if (processTable[i].valid && processTable[i].start >= current->start) {
-                    processTable[i].start = nextFreeStart;
-                    nextFreeStart += processTable[i].size;
-                }
+    // Prozesse verschieben
+    for (unsigned i = 0; i < MAX_PROCESSES; i++) {
+        if (processTable[i].valid && processTable[i].status == running) {
+            if (processTable[i].start != nextFreeStart) {
+                logPid(processTable[i].pid, "Process moved during memory compaction");
+                processTable[i].start = nextFreeStart;
             }
-            current->start = nextFreeStart;
+            nextFreeStart += processTable[i].size;
         }
-        nextFreeStart += current->size;
-        current = current->next;
     }
+
+    // Einen einzigen konsolidierten freien Block erstellen
+    FreeBlock_t* newFreeBlock = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
+    if (!newFreeBlock) {
+        fprintf(stderr, "Memory allocation failed in compactMemory.\n");
+        exit(1);
+    }
+    newFreeBlock->start = nextFreeStart;
+    newFreeBlock->size = MEMORY_SIZE - nextFreeStart;
+    newFreeBlock->next = NULL;
+
+    freeList = newFreeBlock;
+
+    logGeneric("Memory compacted successfully.");
+    logMemoryState();
 }
+
+
+
+
 
 void coreLoop(void) {
     SchedulingEvent_t nextEvent;        // scheduling event to process

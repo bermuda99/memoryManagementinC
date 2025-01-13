@@ -1,4 +1,8 @@
  # OwnerID start duration size type
  00 00 100 100 os
- 01 00 250 100 interactive
- 02 500 200 200 batch
+01 50 250 100 interactive
+02 100 200 200 batch
+03 200 150 300 batch
+04 300 180 150 interactive
+05 400 120 250 foreground
+06 500 90 175 background
