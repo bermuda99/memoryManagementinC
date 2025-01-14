@@ -8,7 +8,7 @@ PCB_t* pNewProcess; // pointer for new process read from batch
 
 FreeBlock_t* freeList = NULL;
 BlockedProcess_t* blockedQueue = NULL;
-//FLO & Ben
+
 /* ---------------------------------------------------------------- */
 /*                Externally available functions                    */
 /* ---------------------------------------------------------------- */
@@ -113,23 +113,21 @@ void freeMemory(unsigned start, unsigned size) {
     logMemoryState();
 }
 
-
-
-
-
-void enqueueBlockedProcess(PCB_t* process) {
+void enqueueBlockedProcessWithPriority(PCB_t* process) {
     BlockedProcess_t* newBlocked = (BlockedProcess_t*)malloc(sizeof(BlockedProcess_t));
     newBlocked->process = process;
     newBlocked->next = NULL;
 
-    if (blockedQueue == NULL) {
+    if (blockedQueue == NULL || process->size < blockedQueue->process->size) {
+        newBlocked->next = blockedQueue;
         blockedQueue = newBlocked;
     }
     else {
         BlockedProcess_t* current = blockedQueue;
-        while (current->next != NULL) {
+        while (current->next != NULL && current->next->process->size <= process->size) {
             current = current->next;
         }
+        newBlocked->next = current->next;
         current->next = newBlocked;
     }
 }
@@ -145,45 +143,44 @@ PCB_t* dequeueBlockedProcess() {
     return process;
 }
 
-void compactMemory() {
-    // Prüfen, ob eine Kompaktierung notwendig ist
+void compactMemoryWithSimulation() {
+    logGeneric("Starting to compact...");
+    logMemoryState(); // Bestehende Funktion für das Loggen des Speicherzustands
+
     if (freeList == NULL || freeList->next == NULL) {
-        logGeneric("Memory compaction skipped: No fragmentation detected.");
+        logGeneric("Compacting skipeen: no fragmentation.");
         return;
     }
 
     unsigned nextFreeStart = 0;
+    unsigned totalCopyCost = 0; // Simuliert den Kopieraufwand
 
-    // Prozesse verschieben
     for (unsigned i = 0; i < MAX_PROCESSES; i++) {
         if (processTable[i].valid && processTable[i].status == running) {
             if (processTable[i].start != nextFreeStart) {
-                logPid(processTable[i].pid, "Process moved during memory compaction");
+                unsigned copySize = processTable[i].size;
+                totalCopyCost += copySize; // Simuliere Kopieroperation
                 processTable[i].start = nextFreeStart;
             }
             nextFreeStart += processTable[i].size;
         }
     }
 
-    // Einen einzigen konsolidierten freien Block erstellen
     FreeBlock_t* newFreeBlock = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
     if (!newFreeBlock) {
-        fprintf(stderr, "Memory allocation failed in compactMemory.\n");
+        fprintf(stderr, "Error allocating memory while compacting.\n");
         exit(1);
     }
     newFreeBlock->start = nextFreeStart;
     newFreeBlock->size = MEMORY_SIZE - nextFreeStart;
     newFreeBlock->next = NULL;
-
     freeList = newFreeBlock;
 
-    logGeneric("Memory compacted successfully.");
-    logMemoryState();
+    char message[100];
+    sprintf(message, "Compacting successful. Compacting: %u bytes.", totalCopyCost);
+    logGeneric(message);
+    logMemoryState(); // Protokolliere den Zustand nach der Kompaktierung
 }
-
-
-
-
 
 void coreLoop(void) {
     SchedulingEvent_t nextEvent;
@@ -225,11 +222,11 @@ void coreLoop(void) {
                             // No suitable block - block process and add to queue
                             processTable[newPid].status = blocked;
                             logPidMem(newPid, "No suitable memory block, process blocked");
-                            enqueueBlockedProcess(&processTable[newPid]);
+                            enqueueBlockedProcessWithPriority(&processTable[newPid]);
 
                             // Check if compaction would help
                             if (usedMemory + processTable[newPid].size <= MEMORY_SIZE) {
-                                compactMemory();
+                                compactMemoryWithSimulation();
                                 // Try again after compaction
                                 block = findFreeBlock(processTable[newPid].size);
                                 if (block != NULL) {
@@ -282,7 +279,7 @@ void coreLoop(void) {
                     logPidMem(blockedProcess->pid, "Blocked process started");
                 }
                 else {
-                    enqueueBlockedProcess(blockedProcess);
+                    enqueueBlockedProcessWithPriority(blockedProcess);
                     break;
                 }
                 blockedProcess = dequeueBlockedProcess();
