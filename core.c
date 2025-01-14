@@ -186,62 +186,91 @@ void compactMemory() {
 
 
 void coreLoop(void) {
-    SchedulingEvent_t nextEvent;        // scheduling event to process
-    unsigned int eventPid;              // pid of a process triggering an event
-    PCB_t* candidateProcess = NULL;     // next process to start, already stored in process table
-    pid_t newPid;                       // pid of new process to start 
-    PCB_t* nextReady = NULL;            // pointer to process that finishes next    
-    unsigned delta = 0;                 // time interval by which the systemTime is advanced
-    Boolean isLaunchable = FALSE;       // indicates if the next process in batch is launchable 
+    SchedulingEvent_t nextEvent;
+    unsigned int eventPid;
+    PCB_t* candidateProcess = NULL;
+    pid_t newPid;
+    PCB_t* nextReady = NULL;
+    unsigned delta = 0;
+    Boolean isLaunchable = FALSE;
 
-    do {    // loop until no more process to run 
-        do {    // loop until no currenlty launchable process is in the batch file
-            if (checkForProcessInBatch())
-            {   // there is a process pending
-                if (isNewProcessReady())    // test if the process is ready to be started
-                {   // the process is ready to be started
+    // Initialize
+    initOS();
+
+    do {
+        // Check for new process
+        do {
+            if (checkForProcessInBatch()) {
+                if (isNewProcessReady()) {
                     isLaunchable = TRUE;
-                    newPid = getNextPid();                  // get next valid pid
-                    initNewProcess(newPid, getNewPCBptr()); // Info on new process provided by simulation
-                    FreeBlock_t* block = findFreeBlock(processTable[newPid].size);
-                    if (block != NULL)
-                    {   // enough memory available, and location in memory found: start process
-                        processTable[newPid].start = block->start;
-                        processTable[newPid].status = running;  // mark new process as running
-                        runningCount++;                         // and add to number of running processes
-                        usedMemory = usedMemory + processTable[newPid].size;  // update amount of used memory
-                        systemTime = systemTime + LOADING_DURATION;  // account for time used by OS
-                        logPidMem(newPid, "Process started and memory allocated");
-                        flagNewProcessStarted();    // process is now a running process, not a candidate any more 
+                    newPid = getNextPid();
+                    initNewProcess(newPid, getNewPCBptr());
+
+                    // First check: Does it fit in total memory?
+                    if (processTable[newPid].size <= MEMORY_SIZE) {
+                        // Second check: Is a suitable memory block available?
+                        FreeBlock_t* block = findFreeBlock(processTable[newPid].size);
+
+                        if (block != NULL) {
+                            // Memory block available - assign and start process
+                            processTable[newPid].start = block->start;
+                            processTable[newPid].status = running;
+                            runningCount++;
+                            usedMemory = usedMemory + processTable[newPid].size;
+                            systemTime = systemTime + LOADING_DURATION;
+                            logPidMem(newPid, "Process started and memory allocated");
+                            flagNewProcessStarted();
+                        }
+                        else {
+                            // No suitable block - block process and add to queue
+                            processTable[newPid].status = blocked;
+                            logPidMem(newPid, "No suitable memory block, process blocked");
+                            enqueueBlockedProcess(&processTable[newPid]);
+
+                            // Check if compaction would help
+                            if (usedMemory + processTable[newPid].size <= MEMORY_SIZE) {
+                                compactMemory();
+                                // Try again after compaction
+                                block = findFreeBlock(processTable[newPid].size);
+                                if (block != NULL) {
+                                    PCB_t* blockedProcess = dequeueBlockedProcess();
+                                    blockedProcess->start = block->start;
+                                    blockedProcess->status = running;
+                                    runningCount++;
+                                    usedMemory += blockedProcess->size;
+                                    logPidMem(blockedProcess->pid, "Process started after compaction");
+                                }
+                            }
+                        }
                     }
-                    else
-                    {
-                        processTable[newPid].status = blocked;  // not enough memory --> blocked due to "no ressources available"
-                        logPidMem(newPid, "Process too large, not started");
-                        enqueueBlockedProcess(&processTable[newPid]);
+                    else {
+                        // Process too large for total memory - reject
+                        logPidMem(newPid, "Process rejected - exceeds total memory size");
+                        deleteProcess(&processTable[newPid]);
                     }
                 }
-                else
-                {
+                else {
                     isLaunchable = FALSE;
                     logGeneric("Sim: Process read but it is not yet ready to run");
                 }
             }
         } while ((!batchComplete) && (isLaunchable));
 
-        delta = runToNextEvent(&nextEvent, &eventPid);      // run the existing processes until a new arrives or one terminates
+        delta = runToNextEvent(&nextEvent, &eventPid);
+        updateAllVirtualTimes(delta);
+        systemTime = systemTime + delta;
 
-        updateAllVirtualTimes(delta);           // update all processes according to elapsed time
+        if (nextEvent == completed) {
+            // Process termination
+            usedMemory = usedMemory - processTable[eventPid].size;
+            logPidMem(eventPid, "Process terminated");
 
-        systemTime = systemTime + delta;        // update system time by elapsed physical time
-        if (nextEvent == completed) // check if a process needs to be terminated
-        {
-            usedMemory = usedMemory - processTable[eventPid].size;  // mark memory of the process free
-            logPidMem(eventPid, "Process terminated, memory freed");
-            freeMemory(processTable[eventPid].start, processTable[eventPid].size); // free the memory
-            deleteProcess(&processTable[eventPid]); // terminate process
-            runningCount--;             // one running process less 
+            // Free memory
+            freeMemory(processTable[eventPid].start, processTable[eventPid].size);
+            deleteProcess(&processTable[eventPid]);
+            runningCount--;
 
+            // After freeing memory, check blocked queue
             PCB_t* blockedProcess = dequeueBlockedProcess();
             while (blockedProcess != NULL) {
                 FreeBlock_t* block = findFreeBlock(blockedProcess->size);
@@ -250,7 +279,7 @@ void coreLoop(void) {
                     blockedProcess->status = running;
                     runningCount++;
                     usedMemory += blockedProcess->size;
-                    logPidMem(blockedProcess->pid, "Blocked process started and memory allocated");
+                    logPidMem(blockedProcess->pid, "Blocked process started");
                 }
                 else {
                     enqueueBlockedProcess(blockedProcess);
@@ -258,14 +287,10 @@ void coreLoop(void) {
                 }
                 blockedProcess = dequeueBlockedProcess();
             }
+
+            // Log the current memory state
+            logMemoryState();
         }
-
-        if (usedMemory < MEMORY_SIZE / 2) {
-            compactMemory();
-        }
-
-        logMemoryState();
-
     } while ((runningCount > 0) || (batchComplete == FALSE));
 }
 
