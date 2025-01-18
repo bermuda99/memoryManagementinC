@@ -22,6 +22,7 @@ void initOS(void)
     for (i = 0; i < MAX_PROCESSES; i++) processTable[i].valid = FALSE;
     process.pid = 0; // reset pid
     freeList = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
+    logGeneric("New consolidated free block created with total size: ");
     if (freeList == NULL) {
         fprintf(stderr, "Memory allocation failed\n");
         exit(1);
@@ -31,31 +32,23 @@ void initOS(void)
     freeList->next = NULL;
 }
 
-FreeBlock_t* findFreeBlock(unsigned size)
-{
+FreeBlock_t* findFreeBlock(unsigned size) {
     FreeBlock_t* current = freeList;
     FreeBlock_t* previous = NULL;
 
-    while (current != NULL)
-    {
-        if (current->size >= size)
-        {
-            // Found a suitable block
-            if (current->size == size)
-            {
-                // Exact match, remove the block from the list
-                if (previous == NULL)
-                {
+
+    while (current != NULL) {
+        if (current->size >= size) {
+            logGeneric("Suitable block found during search: Start = " + current->start + current->size);
+            if (current->size == size) {
+                if (previous == NULL) {
                     freeList = current->next;
                 }
-                else
-                {
+                else {
                     previous->next = current->next;
                 }
             }
-            else
-            {
-                // Allocate part of the block
+            else {
                 current->start += size;
                 current->size -= size;
             }
@@ -64,7 +57,8 @@ FreeBlock_t* findFreeBlock(unsigned size)
         previous = current;
         current = current->next;
     }
-    return NULL; // No suitable block found
+    logGeneric("No suitable block found for size: " + size);
+    return NULL;
 }
 
 void freeMemory(unsigned start, unsigned size) {
@@ -77,10 +71,13 @@ void freeMemory(unsigned start, unsigned size) {
     newBlock->size = size;
     newBlock->next = NULL;
 
+    char buffer[100];
+    sprintf(buffer, "Freeing memory block - Start: %u, Size: %u", start, size);
+    logGeneric(buffer);
+
     FreeBlock_t* current = freeList;
     FreeBlock_t* previous = NULL;
 
-    // In die Liste einfügen
     while (current != NULL && current->start < start) {
         previous = current;
         current = current->next;
@@ -94,25 +91,23 @@ void freeMemory(unsigned start, unsigned size) {
         previous->next = newBlock;
     }
 
-    // Konsolidierung benachbarter Blöcke
     if (newBlock->next != NULL && newBlock->start + newBlock->size == newBlock->next->start) {
         newBlock->size += newBlock->next->size;
         FreeBlock_t* temp = newBlock->next;
-        newBlock->next = newBlock->next->next;
+        newBlock->next = temp->next;
         free(temp);
-        logGeneric("Adjacent free blocks merged (next).");
+        logGeneric("Adjacent blocks merged (next)");
     }
+    
     if (previous != NULL && previous->start + previous->size == newBlock->start) {
         previous->size += newBlock->size;
         previous->next = newBlock->next;
         free(newBlock);
-        logGeneric("Adjacent free blocks merged (previous).");
+        logGeneric("Adjacent blocks merged (previous)");
     }
 
-    logGeneric("Memory freed and consolidated.");
     logMemoryState();
 }
-
 void enqueueBlockedProcessWithPriority(PCB_t* process) {
     BlockedProcess_t* newBlocked = (BlockedProcess_t*)malloc(sizeof(BlockedProcess_t));
     newBlocked->process = process;
@@ -144,176 +139,180 @@ PCB_t* dequeueBlockedProcess() {
 }
 
 void compactMemoryWithSimulation() {
-    logGeneric("Starting to compact...");
-    logMemoryState(); // Bestehende Funktion für das Loggen des Speicherzustands
+    logGeneric("Starting memory compaction...");
+    logMemoryState();
 
     if (freeList == NULL || freeList->next == NULL) {
-        logGeneric("Compacting skipeen: no fragmentation.");
+        logGeneric("Compaction skipped: no fragmentation");
         return;
     }
 
     unsigned nextFreeStart = 0;
-    unsigned totalCopyCost = 0; // Simuliert den Kopieraufwand
+    unsigned totalCopyCost = 0;
 
     for (unsigned i = 0; i < MAX_PROCESSES; i++) {
         if (processTable[i].valid && processTable[i].status == running) {
             if (processTable[i].start != nextFreeStart) {
-                unsigned copySize = processTable[i].size;
-                totalCopyCost += copySize; // Simuliere Kopieroperation
+                char buffer[100];
+                sprintf(buffer, "Moving process %u from %u to %u",
+                    processTable[i].pid, processTable[i].start, nextFreeStart);
+                logGeneric(buffer);
+
+                totalCopyCost += processTable[i].size;
                 processTable[i].start = nextFreeStart;
             }
             nextFreeStart += processTable[i].size;
         }
     }
 
-    FreeBlock_t* newFreeBlock = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
-    if (!newFreeBlock) {
-        fprintf(stderr, "Error allocating memory while compacting.\n");
+    // Create new consolidated free block
+    while (freeList != NULL) {
+        FreeBlock_t* temp = freeList;
+        freeList = freeList->next;
+        free(temp);
+    }
+
+    freeList = (FreeBlock_t*)malloc(sizeof(FreeBlock_t));
+    if (!freeList) {
+        fprintf(stderr, "Memory allocation failed during compaction.\n");
         exit(1);
     }
-    newFreeBlock->start = nextFreeStart;
-    newFreeBlock->size = MEMORY_SIZE - nextFreeStart;
-    newFreeBlock->next = NULL;
-    freeList = newFreeBlock;
+    freeList->start = nextFreeStart;
+    freeList->size = MEMORY_SIZE - nextFreeStart;
+    freeList->next = NULL;
 
-    char message[100];
-    sprintf(message, "Compacting successful. Compacting: %u bytes.", totalCopyCost);
-    logGeneric(message);
-    logMemoryState(); // Protokolliere den Zustand nach der Kompaktierung
+    char buffer[100];
+    sprintf(buffer, "Compaction complete - Moved %u bytes, new free block at %u",
+        totalCopyCost, nextFreeStart);
+    logGeneric(buffer);
+
+    logMemoryState();
 }
 
+
+
 void coreLoop(void) {
-    SchedulingEvent_t nextEvent;
-    unsigned int eventPid;
-    PCB_t* candidateProcess = NULL;
     pid_t newPid;
-    PCB_t* nextReady = NULL;
-    unsigned delta = 0;
+    SchedulingEvent_t nextEvent;
+    unsigned delta;
+    unsigned eventPid;
     Boolean isLaunchable = FALSE;
 
-    // Initialize
+    // 1. Initialize
     initOS();
+    logGeneric("Process info file opened");
+    logGeneric("System initialized, starting batch");
 
     do {
-        // Check for new process
-        do {
-            if (checkForProcessInBatch()) {
-                if (isNewProcessReady()) {
-                    isLaunchable = TRUE;
-                    newPid = getNextPid();
-                    initNewProcess(newPid, getNewPCBptr());
+        // 2. Check for new process
+        if (checkForProcessInBatch()) {
+            logGeneric("Reading next process from batch");
 
-                    // First check: Does it fit in total memory?
-                    if (processTable[newPid].size <= MEMORY_SIZE) {
-                        // Second check: Is a suitable memory block available?
-                        FreeBlock_t* block = findFreeBlock(processTable[newPid].size);
+            if (isNewProcessReady()) {
+                isLaunchable = TRUE;
+                newPid = getNextPid();
+                PCB_t* pNewProcess = getNewPCBptr();
 
-                        if (block != NULL) {
-                            // Memory block available - assign and start process
-                            processTable[newPid].start = block->start;
-                            processTable[newPid].status = running;
-                            runningCount++;
-                            usedMemory = usedMemory + processTable[newPid].size;
-                            systemTime = systemTime + LOADING_DURATION;
-                            logPidMem(newPid, "Process started and memory allocated");
-                            flagNewProcessStarted();
-                        }
-                        else {
-                            // No suitable block - block process and add to queue
-                            processTable[newPid].status = blocked;
-                            logPidMem(newPid, "No suitable memory block, process blocked");
-                            enqueueBlockedProcessWithPriority(&processTable[newPid]);
+                if (pNewProcess != NULL) {
+                    logLoadedProcessData(pNewProcess);
 
-                            // Check if compaction would help
+                    if (initNewProcess(newPid, pNewProcess)) {
+                        // Memory checks and allocation
+                        if (processTable[newPid].size <= MEMORY_SIZE) {
                             if (usedMemory + processTable[newPid].size <= MEMORY_SIZE) {
-                                compactMemoryWithSimulation();
-                                // Try again after compaction
-                                block = findFreeBlock(processTable[newPid].size);
+                                FreeBlock_t* block = findFreeBlock(processTable[newPid].size);
+
+                                if (block == NULL) {
+                                    logGeneric("No suitable block found - attempting compaction");
+                                    compactMemoryWithSimulation();
+                                    block = findFreeBlock(processTable[newPid].size);
+                                }
+
                                 if (block != NULL) {
-                                    PCB_t* blockedProcess = dequeueBlockedProcess();
-                                    blockedProcess->start = block->start;
-                                    blockedProcess->status = running;
+                                    processTable[newPid].start = block->start;
+                                    processTable[newPid].status = running;
+                                    usedMemory += processTable[newPid].size;
                                     runningCount++;
-                                    usedMemory += blockedProcess->size;
-                                    logPidMem(blockedProcess->pid, "Process started after compaction");
+                                    systemTime += LOADING_DURATION;
+                                    logPidMem(processTable[newPid].pid, "Process started and memory allocated");
+                                    flagNewProcessStarted();
+                                }
+                                else {
+                                    processTable[newPid].status = blocked;
+                                    enqueueBlockedProcessWithPriority(&processTable[newPid]);
+                                    logPid(processTable[newPid].pid, "Process blocked - no suitable memory block");
                                 }
                             }
+                            else {
+                                logPid(processTable[newPid].pid, "Process blocked - insufficient memory");
+                                processTable[newPid].status = blocked;
+                                enqueueBlockedProcessWithPriority(&processTable[newPid]);
+                            }
+                        }
+                        else {
+                            logPid(processTable[newPid].pid, "Process rejected - exceeds total memory size");
+                            deleteProcess(&processTable[newPid]);
                         }
                     }
-                    else {
-                        // Process too large for total memory - reject
-                        logPidMem(newPid, "Process rejected - exceeds total memory size");
-                        deleteProcess(&processTable[newPid]);
-                    }
-                }
-                else {
-                    isLaunchable = FALSE;
-                    logGeneric("Sim: Process read but it is not yet ready to run");
                 }
             }
-        } while ((!batchComplete) && (isLaunchable));
+        }
 
         delta = runToNextEvent(&nextEvent, &eventPid);
-        updateAllVirtualTimes(delta);
-        systemTime = systemTime + delta;
+        if (delta > 0) {
+            updateAllVirtualTimes(delta);
+            systemTime += delta;
+        }
 
         if (nextEvent == completed) {
-            // Process termination
-            usedMemory = usedMemory - processTable[eventPid].size;
-            logPidMem(eventPid, "Process terminated");
+            logPid(eventPid, "Process completed, freeing memory");
 
-            // Free memory
+            usedMemory -= processTable[eventPid].size;
             freeMemory(processTable[eventPid].start, processTable[eventPid].size);
             deleteProcess(&processTable[eventPid]);
             runningCount--;
 
-            // After freeing memory, check blocked queue
-            PCB_t* blockedProcess = dequeueBlockedProcess();
-            while (blockedProcess != NULL) {
+            PCB_t* blockedProcess;
+            while ((blockedProcess = dequeueBlockedProcess()) != NULL) {
                 FreeBlock_t* block = findFreeBlock(blockedProcess->size);
                 if (block != NULL) {
                     blockedProcess->start = block->start;
                     blockedProcess->status = running;
                     runningCount++;
                     usedMemory += blockedProcess->size;
-                    logPidMem(blockedProcess->pid, "Blocked process started");
+                    logPid(blockedProcess->pid, "Blocked process started");
                 }
                 else {
                     enqueueBlockedProcessWithPriority(blockedProcess);
                     break;
                 }
-                blockedProcess = dequeueBlockedProcess();
             }
-
-            // Log the current memory state
             logMemoryState();
         }
-    } while ((runningCount > 0) || (batchComplete == FALSE));
-}
 
-unsigned getNextPid()
-{
-    static unsigned pidCounter = 1;
-    unsigned i = 0; // iteration variable;
-    // determine next available pid make sure not to search infinitely
-    while ((processTable[pidCounter].valid) && (i < MAX_PID))
-    {
-        // determine next available pid 
-        pidCounter = (pidCounter + 1) % MAX_PID;
-        if (pidCounter == 0) pidCounter++; // pid=0 is invalid
-        i++; // count the checked entries
-    }
-    if (i == MAX_PID) return 0; // indicate error
-    else           return pidCounter;
+    } while ((runningCount > 0) || (batchComplete == FALSE));
+
+    logGeneric("Batch processing complete, shutting down");
+}
+unsigned getNextPid() {
+    static unsigned pidCounter = 0;
+    unsigned i = 0;
+
+    do {
+        pidCounter++;
+        if (pidCounter >= MAX_PID) pidCounter = 1;
+        i++;
+    } while (processTable[pidCounter].valid && i < MAX_PID);
+
+    if (i >= MAX_PID) return 0;
+    return pidCounter;
 }
 
 int initNewProcess(pid_t newPid, PCB_t* pProcess)
-/* Initialised the PCB at the given index of the process table with the        */
-/* process information provided in the PCB-struct giben by the pointer        */
 {
     if (pProcess == NULL)
         return 0;
-    else {    /* PCB correctly passed, now initialise it */
+    else {
         processTable[newPid].pid = newPid;
         processTable[newPid].ppid = pProcess->ppid;
         processTable[newPid].ownerID = pProcess->ownerID;
@@ -324,20 +323,16 @@ int initNewProcess(pid_t newPid, PCB_t* pProcess)
         processTable[newPid].type = pProcess->type;
         processTable[newPid].status = init;
         processTable[newPid].valid = TRUE;
-        // new process is initialised, now invalidate the PCB passed to this funtion
         pProcess->valid = FALSE;
         return 1;
     }
 }
 
 int deleteProcess(PCB_t* pProcess)
-/* Voids the PCB handed over in pProcess, this includes setting the valid-    */
-/* flag to invalid and setting other values to invalid values.                */
-/* retuns 0 on error and 1 on success                                        */
 {
     if (pProcess == NULL)
         return 0;
-    else {    /* PCB correctly passed, now delete it */
+    else {
         pProcess->valid = FALSE;
         pProcess->pid = 0;
         pProcess->ppid = 0;
@@ -351,7 +346,3 @@ int deleteProcess(PCB_t* pProcess)
         return 1;
     }
 }
-
-/* ----------------------------------------------------------------- */
-/*                       Local helper functions                      */
-/* ----------------------------------------------------------------- */

@@ -1,8 +1,34 @@
  # OwnerID start duration size type
- 00 00 100 100 os
-01 50 250 100 interactive
-02 100 200 200 batch
-03 200 150 300 batch
-04 300 180 150 interactive
-05 400 120 250 foreground
-06 500 90 175 background
+ 00 00 10000 100 os
+ 01 00 150 100 interactive
+ 05 50 500 428 foreground
+ 03 100 200 200 batch
+ 04 100 200 200 foreground
+ 07 110 500 225 foreground
+ 06 110 200 200 batch
+ 08 114 200 200 foreground
+ 05 115 500 118 foreground
+ 03 115 700 11 batch
+ 04 115 200 900 foreground
+ 07 120 500 225 foreground
+ 06 120 200 200 batch
+ 08 124 200 200 foreground
+ 03 128 200 11 batch
+ 04 137 200 5 foreground
+ 07 144 500 225 foreground
+ 06 400 200 200 batch
+ 08 600 200 200 foreground
+ 07 624 500 225 foreground
+ 06 643 200 200 batch
+ 08 666 200 200 foreground
+ 05 666 500 118 foreground
+ 03 666 700 11 batch
+ 04 666 200 900 foreground
+ 07 666 500 225 foreground
+ 06 666 200 200 batch
+ 08 666 200 200 foreground
+ 03 800 200 11 batch
+ 04 871 200 5 foreground
+ 07 880 500 225 foreground
+ 06 900 200 200 batch
+ 08 1000 200 200 foreground
